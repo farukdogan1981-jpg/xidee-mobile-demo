@@ -1,0 +1,181 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XIDEE Scalper</title>
+<style>
+body{background:#0b1220;color:white;font:15px Arial;padding:16px}
+.card{background:#19263a;padding:15px;border-radius:12px;margin:12px 0}
+button{padding:13px;border:0;border-radius:8px;background:#3975d5;color:white;margin:4px}
+table{width:100%;font-size:12px}
+td,th{padding:8px;text-align:right}
+td:first-child,th:first-child{text-align:left}
+.green{color:#35c98a}.red{color:#ff6677}
+</style>
+</head>
+<body>
+<h2>XIDEE FUTURES SCALPER</h2>
+<div class="card">
+<div id="status">Bağlantı bekleniyor...</div>
+<h1 id="balance">50.00 USDT</h1>
+Net sonuç: <b id="pnl">0.00</b> USDT<br>
+Kapanan işlem: <b id="count">0</b>
+</div>
+<div class="card">
+<button onclick="start()">BOTU BAŞLAT</button>
+<button onclick="stop()">DURDUR</button>
+<button onclick="reset()">SIFIRLA</button>
+</div>
+<div class="card">
+<h3>Canlı piyasa</h3>
+<table>
+<thead><tr><th>Coin</th><th>Fiyat</th><th>24s %</th></tr></thead>
+<tbody id="coins"></tbody>
+</table>
+</div>
+<div class="card">
+<h3>Açık işlemler</h3>
+<div id="open">Henüz işlem yok</div>
+</div>
+<div class="card">
+<h3>İşlem geçmişi</h3>
+<div id="history">Henüz işlem yok</div>
+</div>
+<script>
+const API="https://fapi.binance.com";
+let balance=50,open=[],history=[],symbols=[],prices={},candles={};
+let running=false,started=0,closed=0;
+const fee=.0005,slip=.0002;
+async function get(url){
+ let r=await fetch(url);
+ if(!r.ok)throw Error(r.status);
+ return r.json();
+}
+async function init(){
+ try{
+ let [info,ticks]=await Promise.all([
+ get(API+"/fapi/v1/exchangeInfo"),
+ get(API+"/fapi/v1/ticker/24hr")
+ ]);
+ let valid=new Set(info.symbols.filter(x=>
+ x.contractType==="PERPETUAL"&&
+ x.quoteAsset==="USDT"&&x.status==="TRADING"
+ ).map(x=>x.symbol));
+ symbols=ticks.filter(x=>valid.has(x.symbol))
+ .sort((a,b)=>+b.quoteVolume- +a.quoteVolume)
+ .slice(0,10).map(x=>x.symbol);
+ ticks.forEach(x=>prices[x.symbol]=+x.lastPrice);
+ document.getElementById("status").textContent="CANLI VERİ BAĞLANDI";
+ await refresh();
+ }catch(e){
+ document.getElementById("status").textContent="Bağlantı hatası: "+e;
+ }
+}
+async function refresh(){
+ try{
+ let ticks=await get(API+"/fapi/v1/ticker/24hr");
+ ticks.forEach(x=>prices[x.symbol]=+x.lastPrice);
+ draw();
+ for(let s of symbols){
+ if(running)await analyze(s);
+ manage(s,prices[s]);
+ }
+ }catch(e){
+ document.getElementById("status").textContent="Veri bağlantısı kesildi";
+ }
+}
+function ema(a,p){
+ let k=2/(p+1),v=a.slice(0,p).reduce((x,y)=>x+y,0)/p;
+ for(let n of a.slice(p))v=n*k+v*(1-k);
+ return v;
+}
+function rsi(a){
+ let g=0,l=0;
+ for(let i=a.length-14;i<a.length;i++){
+ let d=a[i]-a[i-1];
+ if(d>0)g+=d;else l-=d;
+ }
+ return l===0?100:100-100/(1+g/l);
+}
+async function analyze(s){
+ let k=await get(API+"/fapi/v1/klines?symbol="+s+"&interval=1m&limit=60");
+ let key=k[k.length-2][0];
+ if(candles[s]===key)return;
+ candles[s]=key;
+ let c=k.slice(0,-1).map(x=>+x[4]);
+ let v=k.slice(0,-1).map(x=>+x[5]);
+ let e9=ema(c.slice(-30),9),e21=ema(c.slice(-40),21);
+ let rv=rsi(c),avg=v.slice(-21,-1).reduce((a,b)=>a+b,0)/20;
+ let dir=null;
+ if(e9>e21&&rv>52&&rv<72&&v[v.length-1]>avg*1.15)dir="LONG";
+ if(e9<e21&&rv<48&&rv>28&&v[v.length-1]>avg*1.15)dir="SHORT";
+ if(dir&&!open.some(x=>x.s===s)&&open.length<2)enter(s,dir,prices[s]);
+}
+function enter(s,dir,p){
+ let size=Math.min(50,balance*.45*5);
+ if(size<10)return;
+ let entry=p*(dir==="LONG"?1+slip:1-slip);
+ let qty=size/entry,dist=.005;
+ let f=size*fee;
+ balance-=f;
+ open.push({s,dir,entry,qty,f,
+ sl:entry*(dir==="LONG"?1-dist:1+dist),
+ tp:entry*(dir==="LONG"?1+dist*1.8:1-dist*1.8)});
+ draw();
+}
+function manage(s,p){
+ for(let t of [...open]){
+ if(t.s!==s)continue;
+ let hit=t.dir==="LONG"?
+ (p<=t.sl?"STOP":p>=t.tp?"TP":null):
+ (p>=t.sl?"STOP":p<=t.tp?"TP":null);
+ if(!hit)continue;
+ let exit=p*(t.dir==="LONG"?1-slip:1+slip);
+ let gross=(exit-t.entry)*t.qty*(t.dir==="LONG"?1:-1);
+ let net=gross-exit*t.qty*fee-t.f;
+ balance+=gross-exit*t.qty*fee;
+ history.unshift({s,dir:t.dir,net});
+ open=open.filter(x=>x!==t);
+ closed++;
+ draw();
+ }
+}
+function start(){
+ if(!symbols.length){alert("Piyasa verisini bekleyin");return}
+ if(started&&Date.now()-started>=259200000){
+ alert("3 günlük test tamamlandı");return;
+ }
+ if(!started)started=Date.now();
+ running=true;
+ document.getElementById("status").textContent="OTOMATİK DEMO AKTİF";
+}
+function stop(){
+ running=false;
+ document.getElementById("status").textContent="BOT DURDURULDU";
+}
+function reset(){
+ if(!confirm("Demo sıfırlansın mı?"))return;
+ stop();balance=50;open=[];history=[];started=0;closed=0;candles={};draw();
+}
+function draw(){
+ document.getElementById("balance").textContent=balance.toFixed(2)+" USDT";
+ document.getElementById("pnl").textContent=(balance-50).toFixed(3);
+ document.getElementById("count").textContent=closed;
+ document.getElementById("coins").innerHTML=symbols.map(s=>
+ `<tr><td>${s.replace("USDT","")}</td>
+ <td>${prices[s]||0}</td><td>Canlı</td></tr>`).join("");
+ document.getElementById("open").innerHTML=open.map(t=>
+ `${t.s} ${t.dir} | Giriş: ${t.entry.toFixed(4)}<br>
+ SL: ${t.sl.toFixed(4)} / TP: ${t.tp.toFixed(4)}<hr>`
+ ).join("")||"Açık işlem yok";
+ document.getElementById("history").innerHTML=history.slice(0,15).map(t=>
+ `${t.s} ${t.dir}: <span class="${t.net>=0?"green":"red"}">${t.net.toFixed(4)} USDT</span><br>`
+ ).join("")||"Henüz işlem yok";
+}
+init();
+setInterval(refresh,15000);
+</script>
+</body>
+</html>
