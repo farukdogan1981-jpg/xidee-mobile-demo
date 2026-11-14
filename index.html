@@ -48,6 +48,30 @@ const API="https://fapi.binance.com";
 let balance=50,open=[],history=[],symbols=[],prices={},candles={};
 let running=false,started=0,closed=0;
 const fee=.0005,slip=.0002;
+function saveState(){
+ try{
+  localStorage.setItem("xidee-demo-state",
+   JSON.stringify({balance,open,history,started,closed})
+  );
+ }catch(e){}
+}
+
+function restoreState(){
+ try{
+  const x=JSON.parse(
+   localStorage.getItem("xidee-demo-state")||"null"
+  );
+  if(x){
+   balance=x.balance??50;
+   open=x.open||[];
+   history=x.history||[];
+   started=x.started||0;
+   closed=x.closed||history.length;
+  }
+ }catch(e){}
+}
+restoreState();
+
 async function get(url){
  let r=await fetch(url);
  if(!r.ok)throw Error(r.status);
