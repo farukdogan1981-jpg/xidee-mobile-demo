@@ -3,203 +3,557 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>XIDEE Scalper</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>XIDEE Futures Scalper v2</title>
+
 <style>
-body{background:#0b1220;color:white;font:15px Arial;padding:16px}
-.card{background:#19263a;padding:15px;border-radius:12px;margin:12px 0}
-button{padding:13px;border:0;border-radius:8px;background:#3975d5;color:white;margin:4px}
-table{width:100%;font-size:12px}
-td,th{padding:8px;text-align:right}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:#0b1220;color:#edf3fb;font:15px Arial,sans-serif}
+h2{color:#75a9ff;letter-spacing:1px}
+.card{background:#19263a;padding:15px;border-radius:13px;margin:12px 0;border:1px solid #293b53}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{font-size:12px;color:#91a2b8}
+.metric strong{display:block;font-size:23px;color:white;margin-top:7px}
+button{padding:13px;border:0;border-radius:9px;background:#3975d5;color:white;font-weight:bold;margin:4px}
+button.stop{background:#8d3545}
+button.reset{background:#344258}
+.status{color:#35c98a;font-weight:bold}
+.muted{color:#91a2b8;font-size:12px}
+table{width:100%;font-size:12px;border-collapse:collapse}
+td,th{padding:10px 4px;text-align:right;border-bottom:1px solid #344258}
 td:first-child,th:first-child{text-align:left}
-.green{color:#35c98a}.red{color:#ff6677}
+.green{color:#35c98a}
+.red{color:#ff6677}
+.tag{padding:4px 6px;border-radius:5px;background:#24364f}
+.long{color:#35c98a}
+.short{color:#ff6677}
 </style>
 </head>
+
 <body>
+
 <h2>XIDEE FUTURES SCALPER</h2>
+<p class="muted">Mobile Paper Trading · Version 2.0</p>
+
 <div class="card">
-<div id="status">Bağlantı bekleniyor...</div>
-<h1 id="balance">50.00 USDT</h1>
-Net sonuç: <b id="pnl">0.00</b> USDT<br>
-Kapanan işlem: <b id="count">0</b>
+<div id="status" class="status">Binance bağlantısı bekleniyor...</div>
+<div class="grid">
+<div class="metric">Sanal bakiye<strong id="balance">50.00 USDT</strong></div>
+<div class="metric">Net sonuç<strong id="pnl">0.00 USDT</strong></div>
+<div class="metric">Kapanan işlemler<strong id="count">0</strong></div>
+<div class="metric">Açık pozisyon<strong id="openCount">0 / 2</strong></div>
 </div>
+</div>
+
 <div class="card">
 <button onclick="start()">BOTU BAŞLAT</button>
-<button onclick="stop()">DURDUR</button>
-<button onclick="reset()">SIFIRLA</button>
+<button class="stop" onclick="stop()">DURDUR</button>
+<button class="reset" onclick="resetDemo()">SIFIRLA</button>
+<p class="muted" id="botStatus">Bot durduruldu.</p>
 </div>
+
 <div class="card">
-<h3>Canlı piyasa</h3>
+<h3>Test bilgileri</h3>
+<p class="muted">Başlangıç sermayesi: 50 USDT</p>
+<p class="muted">Kaldıraç: 5x (simülasyon)</p>
+<p class="muted">İşlem başına hedef risk: 0.25 USDT</p>
+<p class="muted">Azami açık işlem: 2</p>
+<p class="muted">Günlük zarar limiti: 1.50 USDT</p>
+<p class="muted">Test süresi: 3 gün</p>
+<p class="muted">Son test başlangıcı: <span id="started">Henüz başlamadı</span></p>
+</div>
+
+<div class="card">
+<h3>Canlı piyasa – İlk 10 coin</h3>
 <table>
-<thead><tr><th>Coin</th><th>Fiyat</th><th>24s %</th></tr></thead>
-<tbody id="coins"></tbody>
+<thead>
+<tr><th>Coin</th><th>Fiyat</th><th>24s %</th><th>Sinyal</th></tr>
+</thead>
+<tbody id="coins">
+<tr><td colspan="4">Veri bekleniyor...</td></tr>
+</tbody>
 </table>
 </div>
+
 <div class="card">
-<h3>Açık işlemler</h3>
-<div id="open">Henüz işlem yok</div>
+<h3>Açık sanal işlemler</h3>
+<div id="open">Açık işlem yok</div>
 </div>
+
 <div class="card">
 <h3>İşlem geçmişi</h3>
 <div id="history">Henüz işlem yok</div>
 </div>
+
+<div class="card">
+<h3>Veri ve kayıt durumu</h3>
+<p class="muted" id="connection">Bağlantı kontrol ediliyor...</p>
+<p class="muted" id="saved">Kayıt bekleniyor...</p>
+</div>
+
+<p class="muted">
+Bu uygulama yalnızca sanal işlemler yapar. Binance hesabına emir göndermez.
+Veriler bu cihazın Safari yerel hafızasında saklanır.
+Sayfa arka plana alındığında fiyat takibi duraklayabilir.
+</p>
+
 <script>
+"use strict";
+
 const API="https://fapi.binance.com";
-let balance=50,open=[],history=[],symbols=[],prices={},candles={};
-let running=false,started=0,closed=0;
-const fee=.0005,slip=.0002;
+const INITIAL=50;
+const LEVERAGE=5;
+const FEE=0.0005;
+const SLIPPAGE=0.0002;
+const RISK=0.25;
+const MAX_OPEN=2;
+const DAILY_LIMIT=1.50;
+const TEST_DURATION=3*24*60*60*1000;
+const STORAGE_KEY="xidee-demo-v2";
+
+let balance=INITIAL;
+let open=[];
+let history=[];
+let symbols=[];
+let prices={};
+let market={};
+let candles={};
+let lastCandle={};
+let running=false;
+let started=0;
+let closed=0;
+let dayStart=0;
+let dayPnL=0;
+
 function saveState(){
  try{
-  localStorage.setItem("xidee-demo-state",
-   JSON.stringify({balance,open,history,started,closed})
-  );
- }catch(e){}
+  const state={
+   version:2,
+   balance,
+   open,
+   history:history.slice(0,100),
+   started,
+   closed,
+   dayStart,
+   dayPnL,
+   lastCandle
+  };
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+  document.getElementById("saved").textContent=
+   "Son kayıt: "+new Date().toLocaleTimeString("tr-TR");
+ }catch(e){
+  document.getElementById("saved").textContent=
+   "Kayıt hatası: "+e.message;
+ }
 }
 
 function restoreState(){
  try{
-  const x=JSON.parse(
-   localStorage.getItem("xidee-demo-state")||"null"
-  );
-  if(x){
-   balance=x.balance??50;
-   open=x.open||[];
-   history=x.history||[];
-   started=x.started||0;
-   closed=x.closed||history.length;
-  }
- }catch(e){}
-}
-restoreState();
+  const raw=localStorage.getItem(STORAGE_KEY);
+  if(!raw)return;
+  const s=JSON.parse(raw);
+  if(s.version!==2)return;
 
-async function get(url){
- let r=await fetch(url);
- if(!r.ok)throw Error(r.status);
- return r.json();
-}
-async function init(){
- try{
- let [info,ticks]=await Promise.all([
- get(API+"/fapi/v1/exchangeInfo"),
- get(API+"/fapi/v1/ticker/24hr")
- ]);
- let valid=new Set(info.symbols.filter(x=>
- x.contractType==="PERPETUAL"&&
- x.quoteAsset==="USDT"&&x.status==="TRADING"
- ).map(x=>x.symbol));
- symbols=ticks.filter(x=>valid.has(x.symbol))
- .sort((a,b)=>+b.quoteVolume- +a.quoteVolume)
- .slice(0,10).map(x=>x.symbol);
- ticks.forEach(x=>prices[x.symbol]=+x.lastPrice);
- document.getElementById("status").textContent="CANLI VERİ BAĞLANDI";
- await refresh();
+  balance=Number(s.balance??INITIAL);
+  open=Array.isArray(s.open)?s.open:[];
+  history=Array.isArray(s.history)?s.history:[];
+  started=Number(s.started||0);
+  closed=Number(s.closed||0);
+  dayStart=Number(s.dayStart||0);
+  dayPnL=Number(s.dayPnL||0);
+  lastCandle=s.lastCandle||{};
+
+  running=false;
+  document.getElementById("botStatus").textContent=
+   "Önceki demo kayıtları geri yüklendi. Bot duraklatıldı.";
  }catch(e){
- document.getElementById("status").textContent="Bağlantı hatası: "+e;
+  console.log("Kayıt okunamadı",e);
  }
 }
+
+function expired(){
+ return started>0 && Date.now()-started>=TEST_DURATION;
+}
+
+async function getJSON(url){
+ const response=await fetch(url);
+ if(!response.ok)throw Error("HTTP "+response.status);
+ return response.json();
+}
+
+async function init(){
+ restoreState();
+ render();
+
+ try{
+  const [info,ticks]=await Promise.all([
+   getJSON(API+"/fapi/v1/exchangeInfo"),
+   getJSON(API+"/fapi/v1/ticker/24hr")
+  ]);
+
+  const valid=new Set(
+   info.symbols.filter(x=>
+    x.contractType==="PERPETUAL" &&
+    x.quoteAsset==="USDT" &&
+    x.status==="TRADING"
+   ).map(x=>x.symbol)
+  );
+
+  symbols=ticks
+   .filter(x=>valid.has(x.symbol))
+   .sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume))
+   .slice(0,10)
+   .map(x=>x.symbol);
+
+  updateTickers(ticks);
+
+  document.getElementById("connection").textContent=
+   "Binance Futures bağlantısı başarılı";
+
+  await refresh();
+
+ }catch(e){
+  document.getElementById("connection").textContent=
+   "Bağlantı hatası: "+e.message;
+  document.getElementById("status").textContent=
+   "Piyasa verisi alınamadı.";
+ }
+
+ render();
+}
+
+function updateTickers(ticks){
+ for(const t of ticks){
+  if(symbols.includes(t.symbol)){
+   market[t.symbol]=t;
+   prices[t.symbol]=Number(t.lastPrice);
+  }
+ }
+}
+
+function ema(values,period){
+ if(values.length<period)return null;
+ const k=2/(period+1);
+ let value=values.slice(0,period).reduce((a,b)=>a+b,0)/period;
+ for(const x of values.slice(period)){
+  value=x*k+value*(1-k);
+ }
+ return value;
+}
+
+function rsi(values,period=14){
+ if(values.length<=period)return 50;
+ let gains=0,losses=0;
+ for(let i=values.length-period;i<values.length;i++){
+  const d=values[i]-values[i-1];
+  if(d>0)gains+=d;
+  else losses-=d;
+ }
+ return losses===0?100:100-100/(1+gains/losses);
+}
+
+async function analyze(symbol){
+ const k=await getJSON(
+  API+"/fapi/v1/klines?symbol="+symbol+"&interval=1m&limit=60"
+ );
+
+ const candleKey=k[k.length-2][0];
+
+ if(lastCandle[symbol]===candleKey)return;
+ lastCandle[symbol]=candleKey;
+
+ const candlesClosed=k.slice(0,-1);
+ const closes=candlesClosed.map(x=>Number(x[4]));
+ const volumes=candlesClosed.map(x=>Number(x[5]));
+
+ const e9=ema(closes.slice(-30),9);
+ const e21=ema(closes.slice(-40),21);
+ const currentRSI=rsi(closes);
+
+ const averageVolume=
+  volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/20;
+
+ const currentVolume=volumes[volumes.length-1];
+
+ let direction=null;
+
+ if(e9>e21 && currentRSI>52 &&
+    currentRSI<72 && currentVolume>averageVolume*1.15){
+  direction="LONG";
+ }
+
+ if(e9<e21 && currentRSI<48 &&
+    currentRSI>28 && currentVolume>averageVolume*1.15){
+  direction="SHORT";
+ }
+
+ if(direction && !open.some(x=>x.s===symbol)){
+  if(open.length<MAX_OPEN && running){
+   enter(symbol,direction,prices[symbol]);
+  }
+ }
+}
+
+function dailyGuard(){
+ if(!dayStart || Date.now()-dayStart>=86400000){
+  dayStart=Date.now();
+  dayPnL=0;
+  saveState();
+ }
+
+ if(dayPnL<=-DAILY_LIMIT){
+  running=false;
+  document.getElementById("botStatus").textContent=
+   "Günlük zarar limiti aşıldı. Bot durduruldu.";
+  saveState();
+  return false;
+ }
+
+ return true;
+}
+
+function enter(symbol,direction,price){
+ if(!price || open.length>=MAX_OPEN)return;
+ if(open.some(x=>x.s===symbol))return;
+ if(!dailyGuard())return;
+
+ const stopDistance=0.005;
+ let notional=Math.min(RISK/stopDistance,balance*0.45*LEVERAGE);
+
+ if(notional<10)return;
+
+ const entry=price*(direction==="LONG"?1+SLIPPAGE:1-SLIPPAGE);
+ const qty=notional/entry;
+ const margin=notional/LEVERAGE;
+ const entryFee=notional*FEE;
+
+ balance-=entryFee;
+
+ open.push({
+  s:symbol,
+  dir:direction,
+  entry,
+  qty,
+  notional,
+  margin,
+  fee:entryFee,
+  sl:entry*(direction==="LONG"?1-stopDistance:1+stopDistance),
+  tp:entry*(direction==="LONG"?1+stopDistance*1.8:1-stopDistance*1.8),
+  time:Date.now()
+ });
+
+ saveState();
+ render();
+}
+
+function manage(symbol,price){
+ if(!price)return;
+
+ for(const trade of [...open]){
+  if(trade.s!==symbol)continue;
+
+  let hit=null;
+
+  if(trade.dir==="LONG"){
+   if(price<=trade.sl)hit="STOP";
+   else if(price>=trade.tp)hit="TP";
+  }else{
+   if(price>=trade.sl)hit="STOP";
+   else if(price<=trade.tp)hit="TP";
+  }
+
+  if(hit)closeTrade(trade,price,hit);
+ }
+}
+
+function closeTrade(trade,price,reason){
+ const exit=price*(trade.dir==="LONG"?1-SLIPPAGE:1+SLIPPAGE);
+
+ const gross=(exit-trade.entry)*trade.qty*
+  (trade.dir==="LONG"?1:-1);
+
+ const exitFee=exit*trade.qty*FEE;
+ const net=gross-exitFee-trade.fee;
+
+ balance+=gross-exitFee;
+ dayPnL+=net;
+
+ history.unshift({
+  s:trade.s,
+  dir:trade.dir,
+  entry:trade.entry,
+  exit,
+  net,
+  reason,
+  time:Date.now()
+ });
+
+ history=history.slice(0,100);
+ open=open.filter(x=>x!==trade);
+ closed++;
+
+ saveState();
+ render();
+}
+
 async function refresh(){
  try{
- let ticks=await get(API+"/fapi/v1/ticker/24hr");
- ticks.forEach(x=>prices[x.symbol]=+x.lastPrice);
- draw();
- for(let s of symbols){
- if(running)await analyze(s);
- manage(s,prices[s]);
- }
+  const ticks=await getJSON(API+"/fapi/v1/ticker/24hr");
+  updateTickers(ticks);
+
+  for(const symbol of symbols){
+   manage(symbol,prices[symbol]);
+  }
+
+  if(running){
+   if(expired()){
+    stop("Üç günlük test süresi tamamlandı.");
+   }else if(dailyGuard()){
+    for(const symbol of symbols){
+     if(!running)break;
+     try{
+      await analyze(symbol);
+     }catch(e){
+      console.log(symbol,e);
+     }
+    }
+   }
+  }
+
+  document.getElementById("connection").textContent=
+   "Canlı piyasa verisi güncel";
+  render();
+
  }catch(e){
- document.getElementById("status").textContent="Veri bağlantısı kesildi";
+  document.getElementById("connection").textContent=
+   "Veri bağlantısı kesildi: "+e.message;
  }
 }
-function ema(a,p){
- let k=2/(p+1),v=a.slice(0,p).reduce((x,y)=>x+y,0)/p;
- for(let n of a.slice(p))v=n*k+v*(1-k);
- return v;
-}
-function rsi(a){
- let g=0,l=0;
- for(let i=a.length-14;i<a.length;i++){
- let d=a[i]-a[i-1];
- if(d>0)g+=d;else l-=d;
- }
- return l===0?100:100-100/(1+g/l);
-}
-async function analyze(s){
- let k=await get(API+"/fapi/v1/klines?symbol="+s+"&interval=1m&limit=60");
- let key=k[k.length-2][0];
- if(candles[s]===key)return;
- candles[s]=key;
- let c=k.slice(0,-1).map(x=>+x[4]);
- let v=k.slice(0,-1).map(x=>+x[5]);
- let e9=ema(c.slice(-30),9),e21=ema(c.slice(-40),21);
- let rv=rsi(c),avg=v.slice(-21,-1).reduce((a,b)=>a+b,0)/20;
- let dir=null;
- if(e9>e21&&rv>52&&rv<72&&v[v.length-1]>avg*1.15)dir="LONG";
- if(e9<e21&&rv<48&&rv>28&&v[v.length-1]>avg*1.15)dir="SHORT";
- if(dir&&!open.some(x=>x.s===s)&&open.length<2)enter(s,dir,prices[s]);
-}
-function enter(s,dir,p){
- let size=Math.min(50,balance*.45*5);
- if(size<10)return;
- let entry=p*(dir==="LONG"?1+slip:1-slip);
- let qty=size/entry,dist=.005;
- let f=size*fee;
- balance-=f;
- open.push({s,dir,entry,qty,f,
- sl:entry*(dir==="LONG"?1-dist:1+dist),
- tp:entry*(dir==="LONG"?1+dist*1.8:1-dist*1.8)});
- draw();
-}
-function manage(s,p){
- for(let t of [...open]){
- if(t.s!==s)continue;
- let hit=t.dir==="LONG"?
- (p<=t.sl?"STOP":p>=t.tp?"TP":null):
- (p>=t.sl?"STOP":p<=t.tp?"TP":null);
- if(!hit)continue;
- let exit=p*(t.dir==="LONG"?1-slip:1+slip);
- let gross=(exit-t.entry)*t.qty*(t.dir==="LONG"?1:-1);
- let net=gross-exit*t.qty*fee-t.f;
- balance+=gross-exit*t.qty*fee;
- history.unshift({s,dir:t.dir,net});
- open=open.filter(x=>x!==t);
- closed++;
- draw();
- }
-}
+
 function start(){
- if(!symbols.length){alert("Piyasa verisini bekleyin");return}
- if(started&&Date.now()-started>=259200000){
- alert("3 günlük test tamamlandı");return;
+ if(!symbols.length){
+  alert("Önce Binance verisinin gelmesini bekleyin.");
+  return;
  }
- if(!started)started=Date.now();
+
+ if(expired()){
+  alert("Üç günlük test tamamlandı. Yeni demo için sıfırlayın.");
+  return;
+ }
+
+ if(!started){
+  started=Date.now();
+  dayStart=Date.now();
+  dayPnL=0;
+ }
+
+ if(!dailyGuard())return;
+
  running=true;
- document.getElementById("status").textContent="OTOMATİK DEMO AKTİF";
+ document.getElementById("status").textContent=
+  "Otomatik sanal işlem aktif";
+ document.getElementById("botStatus").textContent=
+  "Bot çalışıyor. Yeni sinyaller izleniyor.";
+
+ saveState();
+ render();
 }
-function stop(){
+
+function stop(message){
  running=false;
- document.getElementById("status").textContent="BOT DURDURULDU";
+ document.getElementById("botStatus").textContent=
+  message||"Bot durduruldu. Açık işlemler korunuyor.";
+ saveState();
+ render();
 }
-function reset(){
- if(!confirm("Demo sıfırlansın mı?"))return;
- stop();balance=50;open=[];history=[];started=0;closed=0;candles={};draw();
+
+function resetDemo(){
+ if(!confirm("Tüm sanal işlemler, bakiye ve geçmiş sıfırlansın mı?"))return;
+
+ running=false;
+ balance=INITIAL;
+ open=[];
+ history=[];
+ started=0;
+ closed=0;
+ dayStart=0;
+ dayPnL=0;
+ lastCandle={};
+
+ saveState();
+ render();
+
+ document.getElementById("botStatus").textContent=
+  "Yeni demo oturumu hazır.";
 }
-function draw(){
- document.getElementById("balance").textContent=balance.toFixed(2)+" USDT";
- document.getElementById("pnl").textContent=(balance-50).toFixed(3);
+
+function render(){
+ document.getElementById("balance").textContent=
+  balance.toFixed(2)+" USDT";
+
+ const pnl=balance-INITIAL;
+ const pnlElement=document.getElementById("pnl");
+
+ pnlElement.textContent=(pnl>=0?"+":"")+pnl.toFixed(3)+" USDT";
+ pnlElement.className=pnl>=0?"green":"red";
+
  document.getElementById("count").textContent=closed;
- document.getElementById("coins").innerHTML=symbols.map(s=>
- `<tr><td>${s.replace("USDT","")}</td>
- <td>${prices[s]||0}</td><td>Canlı</td></tr>`).join("");
- document.getElementById("open").innerHTML=open.map(t=>
- `${t.s} ${t.dir} | Giriş: ${t.entry.toFixed(4)}<br>
- SL: ${t.sl.toFixed(4)} / TP: ${t.tp.toFixed(4)}<hr>`
- ).join("")||"Açık işlem yok";
- document.getElementById("history").innerHTML=history.slice(0,15).map(t=>
- `${t.s} ${t.dir}: <span class="${t.net>=0?"green":"red"}">${t.net.toFixed(4)} USDT</span><br>`
- ).join("")||"Henüz işlem yok";
+ document.getElementById("openCount").textContent=
+  open.length+" / "+MAX_OPEN;
+
+ document.getElementById("started").textContent=
+  started?new Date(started).toLocaleString("tr-TR"):"Henüz başlamadı";
+
+ document.getElementById("status").textContent=
+  running?"BOT AKTİF":"BOT DURAKLATILDI";
+
+ document.getElementById("coins").innerHTML=symbols.map(s=>{
+  const t=market[s]||{};
+  const change=Number(t.priceChangePercent||0);
+
+  return `<tr>
+   <td><b>${s.replace("USDT","")}</b></td>
+   <td>${prices[s]?prices[s].toPrecision(7):"—"}</td>
+   <td class="${change>=0?"green":"red"}">${change.toFixed(2)}%</td>
+   <td>${lastCandle[s]?"İzlendi":"Bekliyor"}</td>
+  </tr>`;
+ }).join("")||'<tr><td colspan="4">Veri bekleniyor...</td></tr>';
+
+ document.getElementById("open").innerHTML=
+  open.map(t=>`
+   <p><b>${t.s} ${t.dir}</b></p>
+   <p class="muted">Giriş: ${t.entry.toPrecision(7)}</p>
+   <p class="muted">Stop: ${t.sl.toPrecision(7)}</p>
+   <p class="muted">Hedef: ${t.tp.toPrecision(7)}</p>
+   <hr>
+  `).join("")||"Açık işlem yok";
+
+ document.getElementById("history").innerHTML=
+  history.slice(0,15).map(t=>`
+   <p><b>${t.s} ${t.dir}</b>
+   <span class="${t.net>=0?"green":"red"}">
+   ${t.net>=0?"+":""}${t.net.toFixed(4)} USDT
+   </span></p>
+   <p class="muted">${t.reason} · ${new Date(t.time).toLocaleString("tr-TR")}</p>
+  `).join("")||"Henüz işlem yok";
+
+ saveState();
 }
+
+restoreState();
+render();
 init();
-setInterval(refresh,15000);
+
+setInterval(()=>{
+ refresh();
+},15000);
+
+window.addEventListener("pagehide",saveState);
+document.addEventListener("visibilitychange",()=>{
+ if(document.visibilityState==="hidden")saveState();
+});
 </script>
+
 </body>
 </html>
